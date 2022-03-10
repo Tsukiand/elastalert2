@@ -950,13 +950,13 @@ class ElastAlerter(object):
             rule['type'].garbage_collect(endtime)
 
         # count per query_key
-        if rule.has_key('query_key'):
+        if 'query_key' in rule:
             query_key_dict = {}
             for data in rule['type'].matches:
                 query_key_k = rule['query_key']
                 query_key_v = data[query_key_k]
                 if query_key_v is not None:
-                    if query_key_dict.has_key(query_key_v):
+                    if query_key_v in query_key_dict:
                         query_key_dict[query_key_v] += 1
                     else:
                         query_key_dict[query_key_v] = 1
