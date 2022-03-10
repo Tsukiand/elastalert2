@@ -964,7 +964,7 @@ class ElastAlerter(object):
             if query_key_value is not None:
                 silence_cache_key += '.' + query_key_value
 
-            if self.is_silenced(rule['name'] + "._silence") or self.is_silenced(silence_cache_key):
+            if self.is_silenced(rule['name'] + "._silence", None) or self.is_silenced(silence_cache_key, None) or self.is_silenced(rule['name'], 'on_demand'):
                 elastalert_logger.info('Ignoring match for silenced rule %s' % (silence_cache_key,))
                 continue
 
@@ -1983,49 +1983,92 @@ class ElastAlerter(object):
         self.silence_cache[silence_cache_key] = (timestamp, exponent)
         return self.writeback('silence', body)
 
-    def is_silenced(self, rule_name):
+    def is_silenced(self, rule_name, type):
         """ Checks if rule_name is currently silenced. Returns false on exception. """
-        if rule_name in self.silence_cache:
-            if ts_now() < self.silence_cache[rule_name][0]:
-                return True
+        if type is not None and type == 'on_demand':
+            new_rule_name = type + "." + rule_name
+            if new_rule_name in self.silence_cache:
+                if ts_now() < self.silence_cache[rule_name][0]:
+                    return True
+            if self.debug:
+                return False
+            query = {'term': {'rule_name': new_rule_name}}
+            sort = {'sort': {'until': {'order': 'desc'}}}
+            if self.writeback_es.is_atleastfive():
+                query = {'query': query}
+            else:
+                query = {'filter': query}
+            query.update(sort)
 
-        if self.debug:
-            return False
-        query = {'term': {'rule_name': rule_name}}
-        sort = {'sort': {'until': {'order': 'desc'}}}
-        if self.writeback_es.is_atleastfive():
-            query = {'query': query}
-        else:
-            query = {'filter': query}
-        query.update(sort)
-
-        try:
-            doc_type = 'silence'
-            index = self.writeback_es.resolve_writeback_index(self.writeback_index, doc_type)
-            if self.writeback_es.is_atleastsixtwo():
-                if self.writeback_es.is_atleastsixsix():
-                    res = self.writeback_es.search(index=index, size=1, body=query,
-                                                   _source_includes=['until', 'exponent'])
+            try:
+                doc_type = 'silence'
+                index = self.writeback_es.resolve_writeback_index(self.writeback_index, doc_type)
+                if self.writeback_es.is_atleastsixtwo():
+                    if self.writeback_es.is_atleastsixsix():
+                        res = self.writeback_es.search(index=index, size=1, body=query,
+                                                       _source_includes=['until', 'exponent'])
+                    else:
+                        res = self.writeback_es.search(index=index, size=1, body=query,
+                                                       _source_include=['until', 'exponent'])
                 else:
-                    res = self.writeback_es.search(index=index, size=1, body=query,
-                                                   _source_include=['until', 'exponent'])
-            else:
-                res = self.writeback_es.deprecated_search(index=index, doc_type=doc_type,
-                                                          size=1, body=query, _source_include=['until', 'exponent'])
-        except ElasticsearchException as e:
-            self.handle_error("Error while querying for alert silence status: %s" % (e), {'rule': rule_name})
+                    res = self.writeback_es.deprecated_search(index=index, doc_type=doc_type,
+                                                              size=1, body=query, _source_include=['until', 'exponent'])
+            except ElasticsearchException as e:
+                self.handle_error("Error while querying for alert silence status: %s" % (e), {'rule': rule_name})
 
+                return False
+            if res['hits']['hits']:
+                until_ts = res['hits']['hits'][0]['_source']['until']
+                exponent = res['hits']['hits'][0]['_source'].get('exponent', 0)
+                if rule_name not in list(self.silence_cache.keys()):
+                    self.silence_cache[rule_name] = (ts_to_dt(until_ts), exponent)
+                else:
+                    self.silence_cache[rule_name] = (ts_to_dt(until_ts), self.silence_cache[rule_name][1])
+                if ts_now() < ts_to_dt(until_ts):
+                    return True
             return False
-        if res['hits']['hits']:
-            until_ts = res['hits']['hits'][0]['_source']['until']
-            exponent = res['hits']['hits'][0]['_source'].get('exponent', 0)
-            if rule_name not in list(self.silence_cache.keys()):
-                self.silence_cache[rule_name] = (ts_to_dt(until_ts), exponent)
+        elif type is None:
+            if rule_name in self.silence_cache:
+                if ts_now() < self.silence_cache[rule_name][0]:
+                    return True
+
+            if self.debug:
+                return False
+            query = {'term': {'rule_name': rule_name}}
+            sort = {'sort': {'until': {'order': 'desc'}}}
+            if self.writeback_es.is_atleastfive():
+                query = {'query': query}
             else:
-                self.silence_cache[rule_name] = (ts_to_dt(until_ts), self.silence_cache[rule_name][1])
-            if ts_now() < ts_to_dt(until_ts):
-                return True
-        return False
+                query = {'filter': query}
+            query.update(sort)
+
+            try:
+                doc_type = 'silence'
+                index = self.writeback_es.resolve_writeback_index(self.writeback_index, doc_type)
+                if self.writeback_es.is_atleastsixtwo():
+                    if self.writeback_es.is_atleastsixsix():
+                        res = self.writeback_es.search(index=index, size=1, body=query,
+                                                       _source_includes=['until', 'exponent'])
+                    else:
+                        res = self.writeback_es.search(index=index, size=1, body=query,
+                                                       _source_include=['until', 'exponent'])
+                else:
+                    res = self.writeback_es.deprecated_search(index=index, doc_type=doc_type,
+                                                              size=1, body=query, _source_include=['until', 'exponent'])
+            except ElasticsearchException as e:
+                self.handle_error("Error while querying for alert silence status: %s" % (e), {'rule': rule_name})
+
+                return False
+            if res['hits']['hits']:
+                until_ts = res['hits']['hits'][0]['_source']['until']
+                exponent = res['hits']['hits'][0]['_source'].get('exponent', 0)
+                if rule_name not in self.silence_cache.keys():
+                    self.silence_cache[rule_name] = (ts_to_dt(until_ts), exponent)
+                else:
+                    self.silence_cache[rule_name] = (ts_to_dt(until_ts), self.silence_cache[rule_name][1])
+                if ts_now() < ts_to_dt(until_ts):
+                    return True
+            return False
 
     def handle_error(self, message, data=None):
         ''' Logs message at error level and writes message, data and traceback to Elasticsearch. '''
