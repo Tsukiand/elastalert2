@@ -954,7 +954,7 @@ class ElastAlerter(object):
             query_key_dict = {}
             for data in rule['type'].matches:
                 query_key_k = rule['query_key']
-                query_key_v = data[query_key_k]
+                query_key_v = None
                 if query_key_k not in data:
                     arrs =  query_key_k.split('.')
                     if len(arrs) > 2:
@@ -967,6 +967,8 @@ class ElastAlerter(object):
                         query_key_dict[query_key_v] += 1
                     else:
                         query_key_dict[query_key_v] = 1
+                else:
+                    query_key_v = data[query_key_k]
 
         # Process any new matches
         num_matches = len(rule['type'].matches)
