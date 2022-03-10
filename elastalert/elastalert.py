@@ -949,6 +949,18 @@ class ElastAlerter(object):
             self.thread_data.cumulative_hits += self.thread_data.num_hits
             rule['type'].garbage_collect(endtime)
 
+        # count per query_key
+        if rule.has_key('query_key'):
+            query_key_dict = {}
+            for data in rule['type'].matches:
+                query_key_k = rule['query_key']
+                query_key_v = data[query_key_k]
+                if query_key_v is not None:
+                    if query_key_dict.has_key(query_key_v):
+                        query_key_dict[query_key_v] += 1
+                    else:
+                        query_key_dict[query_key_v] = 1
+
         # Process any new matches
         num_matches = len(rule['type'].matches)
         while rule['type'].matches:
