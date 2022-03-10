@@ -953,6 +953,7 @@ class ElastAlerter(object):
         num_matches = len(rule['type'].matches)
         while rule['type'].matches:
             match = rule['type'].matches.pop(0)
+            match['num_query_key_matches'] = {}
             match['num_hits'] = self.thread_data.cumulative_hits
             match['num_matches'] = num_matches
 
@@ -963,6 +964,7 @@ class ElastAlerter(object):
             query_key_value = self.get_query_key_value(rule, match)
             if query_key_value is not None:
                 silence_cache_key += '.' + query_key_value
+                match['num_query_key_matches'][query_key_value] = query_key_dict[query_key_value]
 
             if self.is_silenced(rule['name'] + "._silence", None) or self.is_silenced(silence_cache_key, None) or self.is_silenced(rule['name'], 'on_demand'):
                 elastalert_logger.info('Ignoring match for silenced rule %s' % (silence_cache_key,))
